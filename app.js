@@ -1,48 +1,110 @@
-var createError = require('http-errors');
-var express = require('express');
-var path = require('path');
-var cookieParser = require('cookie-parser');
-var logger = require('morgan');
+var app = require('express')();
+var server = require('http').Server(app);
+var io = require('socket.io')(server);
+const TronWeb = require('tronweb');
+const HttpProvider = TronWeb.providers.HttpProvider;
 
-var indexRouter = require('./routes/index');
-//var usersRouter = require('./routes/users');
+const fullNode = new HttpProvider('https://api.trongrid.io');
+const solidityNode = new HttpProvider('https://api.trongrid.io');
+const eventServer = 'https://api.trongrid.io';
 
-var app = express();
+const tronWeb = new TronWeb(
+    fullNode,
+    solidityNode,
+    eventServer,
+    ''
+)
 
-// view engine setup
-/*app.set('views', path.join(__dirname, 'views'));
-app.set('view engine', 'jade');*/
-var allowCrossDomain = function(req, res, next) {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    res.header('Access-Control-Allow-Credentials','true');
-    next();
-};
-app.use(allowCrossDomain);
-app.use(logger('dev'));
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname, 'uploads')));
-app.use('/', indexRouter)
-//app.use('/users', usersRouter);
+const getAllEvents = async ()=>{
+    let oDate = new Date();
+    let timestamp = oDate.getTime() - 24 * 3600 * 1000;
+    let address = 'TMYcx6eoRXnePKT1jVn25ZNeMNJ6828HWk';
+    const success = await tronWeb.getEventResult(
+        address,
+        timestamp,
+        "UserWin",
+        0
+    ).catch(e=>{
+        console.log('win',e);
+    });
+    const fail = await tronWeb.getEventResult(
+        address,
+        timestamp,
+        "UserLose",
+        0
+    ).catch(e=>{
+        console.log('fail',e);
+    });
+    /*console.log(success);
+    console.log(fail);*/
+    let logs = success.concat(fail);
+    logs.sort(function(a,b){
+        return (b.block_timestamp - a.block_timestamp);
+    })
+    return logs;
 
-// catch 404 and forward to error handler
-app.use(function(req, res, next) {
-  next(createError(404));
+    /*let logs = await Promise.all([success, fail]);
+    console.log(logs);*/
+    /*Promise.all([success, fail])
+        .then(logs2 => {
+            let logs;
+            logs = logs2[0].concat(logs2[1]);
+            logs = this.sort(logs, "timestamp");
+            //logs = this.deworming(logs, "transaction");
+            let a = [],
+                b = [];
+            logs.forEach((v,i) => {
+                if(i<20){
+                    const player = tronWeb.address.fromHex(
+                        v.result["_addr"].replace(/^0x/, "41")
+                    );
+                    const select = v.result["_point"];
+                    const result = v.result["_random"];
+                    const input = tronWeb.fromSun(v.result["_amount"]);
+                    const output = v.result["_W"]
+                        ? tronWeb.fromSun(v.result["_W"])
+                        : "0";
+                    const time = v.timestamp;
+                    const transactionId = v.transaction;
+
+                    a.push({
+                        select,
+                        result,
+                        player,
+                        input,
+                        output,
+                        time,
+                        transactionId
+                    });
+                }
+
+            });
+            this.all = a;
+
+        })
+        .catch(err => {
+            console.log(err);
+        });*/
+}
+
+server.listen(8081,()=>{
+  console.log('listen on 8081');
 });
 
-// error handler
-app.use(function(err, req, res, next) {
-  // set locals, only providing error in development
-  res.locals.message = err.message;
-  res.locals.error = req.app.get('env') === 'development' ? err : {};
+app.get('/', async function (req, res) {
+    res.send('welcome socket event server');
+});
 
-  // render the error page
-  res.status(err.status || 500);
-  //res.render('error');
+io.on('connection', async function (socket) {
+    let logs = await getAllEvents().catch(e=>{console.log()});
+    socket.emit('events', { logs: logs });
+    setInterval(async ()=>{
+        let logs = await getAllEvents();
+        socket.emit('events', { logs: logs });
+    },3000);
+    socket.on('my other event', function (data) {
+        console.log(data);
+    });
 });
 
 module.exports = app;
